@@ -1,0 +1,25 @@
+{
+  "name": "pc-link",
+  "version": "0.3.0",
+  "description": "An easy server link between your personal and remote PCs",
+  "keywords": [
+    "remote",
+    "pc",
+    "connect"
+  ],
+  "license": "ISC",
+  "author": "ojalla",
+  "type": "module",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "dependencies": {
+    "clipboardy": "^4.0.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^9.0.1",
+    "ws": "^8.17.0"
+  }
+}

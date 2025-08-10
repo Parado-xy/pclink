@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PC Link (Host + Web Clients)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>PC Link</h1>
+    <div id="connection-status" class="status disconnected">Disconnected</div>
+  </header>
+
+  <section id="auth-section">
+    <h2>Connect</h2>
+    <label>Server URL
+      <input id="serverUrl" placeholder="wss://your-ngrok-host" />
+    </label>
+    <label>Token
+      <input id="token" type="password" />
+    </label>
+    <label>Device ID
+      <input id="deviceId" placeholder="my-browser" />
+    </label>
+    <button id="connectBtn">Connect</button>
+    <label class="remember">
+      <input type="checkbox" id="remember" /> Remember locally
+    </label>
+  </section>
+
+  <section id="main-ui" class="hidden">
+    <div class="panels">
+      <div class="panel">
+        <h2>Devices</h2>
+        <ul id="deviceList"></ul>
+      </div>
+
+      <div class="panel">
+        <h2>Host Clipboard</h2>
+        <p class="small">Host updates appear automatically. You can apply or (if allowed) set host clipboard.</p>
+        <div id="hostClipboardLatest" class="mono small"></div>
+        <textarea id="hostClipboardInput" placeholder="Text to set on HOST clipboard (if allowed)"></textarea>
+        <button id="setHostClipboardBtn">Set Host Clipboard</button>
+      </div>
+
+      <div class="panel">
+        <h2>Browser Clipboard</h2>
+        <button id="readLocalClipboardBtn">Read My Clipboard & Send (Broadcast)</button>
+        <textarea id="localClipboardInput" placeholder="Paste text here to send"></textarea>
+        <button id="sendManualClipboardBtn">Send Above Text</button>
+        <h3>Clipboard History (All Sources)</h3>
+        <ul id="clipboardHistory"></ul>
+      </div>
+
+      <div class="panel">
+        <h2>Host File Browser</h2>
+        <div class="path-row">
+          <input id="fsPath" value="." />
+          <button id="fsListBtn">List</button>
+        </div>
+        <ul id="fsEntries"></ul>
+        <form id="uploadForm">
+          <label>Upload to current directory:
+            <input type="file" id="uploadInput" multiple />
+          </label>
+          <button type="submit">Upload Files</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2>File Transfer (Peer)</h2>
+        <select id="fileTarget">
+          <option value="">Choose target device</option>
+        </select>
+        <input type="file" id="fileInput" multiple />
+        <button id="sendFileBtn">Send File(s)</button>
+        <div id="dropZone">Drag & Drop Files Here</div>
+        <h3>Incoming Files</h3>
+        <ul id="incomingFiles"></ul>
+      </div>
+
+      <div class="panel" id="shellPanel">
+        <h2>Host Shell (If Enabled)</h2>
+        <div class="small muted">Disabled by default on server. Enable by ALLOW_SHELL=true.</div>
+        <input id="shellCommand" placeholder="command" />
+        <input id="shellArgs" placeholder="args (space separated)" />
+        <button id="runShellBtn">Run</button>
+        <pre id="shellOutput" class="shell-output"></pre>
+      </div>
+    </div>
+    <footer>
+      <button id="disconnectBtn">Disconnect</button>
+    </footer>
+  </section>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
