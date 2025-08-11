@@ -13,7 +13,7 @@
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
-    "run": "nodemon server/server.js"
+    "dev": "nodemon server/server.js"
   },
   "dependencies": {
     "clipboardy": "^4.0.0",

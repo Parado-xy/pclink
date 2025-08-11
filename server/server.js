@@ -237,15 +237,18 @@ wss.on("connection", (ws) => {
         // Set the host's clipboard
         host
           .setClipboard(msg.data)
-          .then(() => {
-            // Force immediate broadcast
-            broadcast({
-              type: MessageTypes.HOST_CLIPBOARD_UPDATE,
-              data: msg.data,
-              from: "host",
-              timestamp: Date.now(),
-            });
-          })
+          // NOTE: I (ojalla) commented this out because it causes double broadcasting to happen. 
+          // If we set the clipboard, we watch for that and send out a brodcast. 
+          // This is not necessary. 
+          // .then(() => {
+          //   // Force immediate broadcast
+          //   broadcast({
+          //     type: MessageTypes.HOST_CLIPBOARD_UPDATE,
+          //     data: msg.data,
+          //     from: "host",
+          //     timestamp: Date.now(),
+          //   });
+          // })
           .catch((e) => {
             send(ws, { type: MessageTypes.ERROR, error: e.message });
           });

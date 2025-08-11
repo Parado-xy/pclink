@@ -1,99 +1,338 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>PC Link (Host + Web Clients)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <header>
-    <h1>PC Link</h1>
-    <div id="connection-status" class="status disconnected">Disconnected</div>
-  </header>
-
-  <section id="auth-section">
-    <h2>Connect</h2>
-    <label>Server URL
-      <input id="serverUrl" placeholder="wss://your-ngrok-host" />
-    </label>
-    <label>Token
-      <input id="token" type="password" />
-    </label>
-    <label>Device ID
-      <input id="deviceId" placeholder="my-browser" />
-    </label>
-    <button id="connectBtn">Connect</button>
-    <label class="remember">
-      <input type="checkbox" id="remember" /> Remember locally
-    </label>
-  </section>
-
-  <section id="main-ui" class="hidden">
-    <div class="panels">
-      <div class="panel">
-        <h2>Devices</h2>
-        <ul id="deviceList"></ul>
-      </div>
-
-      <div class="panel">
-        <h2>Host Clipboard</h2>
-        <p class="small">Host updates appear automatically. You can apply or (if allowed) set host clipboard.</p>
-        <div id="hostClipboardLatest" class="mono small"></div>
-        <textarea id="hostClipboardInput" placeholder="Text to set on HOST clipboard (if allowed)"></textarea>
-        <button id="setHostClipboardBtn">Set Host Clipboard</button>
-      </div>
-
-      <div class="panel">
-        <h2>Browser Clipboard</h2>
-        <button id="readLocalClipboardBtn">Read My Clipboard & Send (Broadcast)</button>
-        <textarea id="localClipboardInput" placeholder="Paste text here to send"></textarea>
-        <button id="sendManualClipboardBtn">Send Above Text</button>
-        <h3>Clipboard History (All Sources)</h3>
-        <ul id="clipboardHistory"></ul>
-      </div>
-
-      <div class="panel">
-        <h2>Host File Browser</h2>
-        <div class="path-row">
-          <input id="fsPath" value="." />
-          <button id="fsListBtn">List</button>
+  <head>
+    <meta charset="UTF-8" />
+    <title>PC Link - Universal Device Bridge</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Seamlessly sync clipboard, transfer files, and manage devices across platforms"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%234285f4'><path d='M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z'/></svg>"
+    />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="header-content">
+        <h1>
+          <span class="logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"
+              />
+            </svg>
+          </span>
+          PC Link
+          <span class="version">v2.0</span>
+        </h1>
+        <div class="header-controls">
+          <div id="connection-status" class="status disconnected">
+            <span class="status-indicator"></span>
+            Disconnected
+          </div>
         </div>
-        <ul id="fsEntries"></ul>
-        <form id="uploadForm">
-          <label>Upload to current directory:
-            <input type="file" id="uploadInput" multiple />
-          </label>
-          <button type="submit">Upload Files</button>
+      </div>
+    </header>
+
+    <!-- Enhanced Auth Section -->
+    <section id="auth-section" class="auth-container">
+      <div class="auth-card">
+        <div class="auth-header">
+          <h2>Connect to PC Link Server</h2>
+          <p class="auth-subtitle">
+            Sync clipboard, transfer files, and manage devices
+          </p>
+        </div>
+
+        <form id="connectionForm" class="connection-form">
+          <div class="form-group">
+            <label for="serverUrl">Server URL</label>
+            <input
+              id="serverUrl"
+              type="url"
+              placeholder="wss://your-server.com"
+              required
+              aria-describedby="serverUrl-help"
+            />
+            <small id="serverUrl-help"
+              >WebSocket URL (wss:// for secure, ws:// for local)</small
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="token">Authentication Token</label>
+            <input
+              id="token"
+              type="password"
+              placeholder="Your access token"
+              required
+              aria-describedby="token-help"
+            />
+            <small id="token-help"
+              >Get this from your server administrator</small
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="deviceId">Device Name</label>
+            <input
+              id="deviceId"
+              placeholder="my-browser-device"
+              aria-describedby="deviceId-help"
+            />
+            <small id="deviceId-help"
+              >Optional: Custom name for this device</small
+            >
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" id="connectBtn" class="connect-btn">
+              <span class="btn-text">Connect</span>
+              <span class="btn-spinner hidden">Connecting...</span>
+            </button>
+
+            <label class="checkbox-label">
+              <input type="checkbox" id="remember" />
+              <span class="checkmark"></span>
+              Remember credentials locally
+            </label>
+          </div>
         </form>
       </div>
+    </section>
 
-      <div class="panel">
-        <h2>File Transfer (Peer)</h2>
-        <select id="fileTarget">
-          <option value="">Choose target device</option>
-        </select>
-        <input type="file" id="fileInput" multiple />
-        <button id="sendFileBtn">Send File(s)</button>
-        <div id="dropZone">Drag & Drop Files Here</div>
-        <h3>Incoming Files</h3>
-        <ul id="incomingFiles"></ul>
+    <!-- Enhanced Main UI with Tabs -->
+    <section id="main-ui" class="main-interface hidden">
+      <!-- Device Overview Bar -->
+      <div class="device-bar">
+        <div class="device-info">
+          <span class="device-count">0 devices connected</span>
+        </div>
+        <div class="quick-actions">
+          <button
+            id="quickClipboardBtn"
+            class="quick-btn"
+            title="Quick clipboard sync"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M19,3H14.82C14.4,1.84 13.3,1 12,1C10.7,1 9.6,1.84 9.18,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5A2,2 0 0,0 19,3M12,3A1,1 0 0,1 13,4A1,1 0 0,1 12,5A1,1 0 0,1 11,4A1,1 0 0,1 12,3"
+              />
+            </svg>
+          </button>
+          <button id="quickFileBtn" class="quick-btn" title="Quick file share">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      <div class="panel" id="shellPanel">
-        <h2>Host Shell (If Enabled)</h2>
-        <div class="small muted">Disabled by default on server. Enable by ALLOW_SHELL=true.</div>
-        <input id="shellCommand" placeholder="command" />
-        <input id="shellArgs" placeholder="args (space separated)" />
-        <button id="runShellBtn">Run</button>
-        <pre id="shellOutput" class="shell-output"></pre>
-      </div>
-    </div>
-    <footer>
-      <button id="disconnectBtn">Disconnect</button>
-    </footer>
-  </section>
+      <!-- Tab Navigation -->
+      <nav class="tab-navigation">
+        <button id="tab-clipboard" class="tab-button active">
+          <span class="tab-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M19,3H14.82C14.4,1.84 13.3,1 12,1C10.7,1 9.6,1.84 9.18,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5A2,2 0 0,0 19,3M12,3A1,1 0 0,1 13,4A1,1 0 0,1 12,5A1,1 0 0,1 11,4A1,1 0 0,1 12,3"
+              />
+            </svg>
+          </span>
+          Clipboard
+        </button>
+        <button id="tab-files" class="tab-button">
+          <span class="tab-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"
+              />
+            </svg>
+          </span>
+          Files
+        </button>
+        <button id="tab-browser" class="tab-button">
+          <span class="tab-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M4,3H20A2,2 0 0,1 22,5V4H20V7H4V4H2V5A2,2 0 0,1 4,3M22,19V9H2V19A2,2 0 0,0 4,21H20A2,2 0 0,0 22,19Z"
+              />
+            </svg>
+          </span>
+          Browser
+        </button>
+        <button id="tab-shell" class="tab-button">
+          <span class="tab-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M20,19V7H4V19H20M20,3A2,2 0 0,1 22,5V19A2,2 0 0,1 20,21H4A2,2 0 0,1 2,19V5C2,3.89 2.9,3 4,3H20M13,17V15H18V17H13M9.58,13L5.57,9H8.4L11.7,12.3C12.09,12.69 12.09,13.33 11.7,13.72L8.42,17H5.59L9.58,13Z"
+              />
+            </svg>
+          </span>
+          Shell
+        </button>
+      </nav>
 
-  <script type="module" src="app.js"></script>
-</body>
+      <!-- Tab Panels -->
+      <div class="tab-content">
+        <!-- Clipboard Panel -->
+        <div id="panel-clipboard" class="tab-panel">
+          <div class="panel-grid">
+            <div class="panel">
+              <h3>Connected Devices</h3>
+              <ul id="deviceList" class="device-grid"></ul>
+            </div>
+
+            <div class="panel">
+              <h3>Host Clipboard</h3>
+              <p class="small">
+                Host updates appear automatically. You can apply or (if allowed)
+                set host clipboard.
+              </p>
+              <div class="clipboard-preview" id="hostClipboardLatest"></div>
+              <div class="clipboard-actions">
+                <textarea
+                  id="hostClipboardInput"
+                  placeholder="Set host clipboard content..."
+                ></textarea>
+                <button id="setHostClipboardBtn">Update Host Clipboard</button>
+              </div>
+            </div>
+
+            <div class="panel">
+              <h3>Local Clipboard</h3>
+              <div class="clipboard-actions">
+                <button id="readLocalClipboardBtn" class="primary-btn">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path
+                      d="M19,3H14.82C14.4,1.84 13.3,1 12,1C10.7,1 9.6,1.84 9.18,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5A2,2 0 0,0 19,3M12,3A1,1 0 0,1 13,4A1,1 0 0,1 12,5A1,1 0 0,1 11,4A1,1 0 0,1 12,3"
+                    />
+                  </svg>
+                  Sync My Clipboard
+                </button>
+                <textarea
+                  id="localClipboardInput"
+                  placeholder="Or type content to send..."
+                ></textarea>
+                <button id="sendManualClipboardBtn">Send Text</button>
+              </div>
+            </div>
+
+            <div class="panel clipboard-history-panel">
+              <h3>Clipboard History</h3>
+              <div class="history-controls">
+                <button id="clearHistoryBtn" class="secondary-btn">
+                  Clear History
+                </button>
+                <input
+                  type="search"
+                  id="historySearch"
+                  placeholder="Search history..."
+                />
+              </div>
+              <ul id="clipboardHistory" class="clipboard-list"></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Files Panel -->
+        <div id="panel-files" class="tab-panel hidden">
+          <div class="panel-grid">
+            <div class="panel">
+              <h3>File Transfer (Peer)</h3>
+              <div class="file-transfer-controls">
+                <div class="file-control-row">
+                  <select id="fileTarget">
+                    <option value="">Choose target device</option>
+                  </select>
+                  <input type="file" id="fileInput" multiple />
+                  <button id="sendFileBtn">Send File(s)</button>
+                </div>
+              </div>
+              <div id="dropZone">
+                <svg
+                  width="48"
+                  height="48"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  style="opacity: 0.3"
+                >
+                  <path
+                    d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"
+                  />
+                </svg>
+                <div>Drag & Drop Files Here</div>
+              </div>
+              <h4>Incoming Files</h4>
+              <ul id="incomingFiles"></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Browser Panel -->
+        <div id="panel-browser" class="tab-panel hidden">
+          <div class="panel-grid">
+            <div class="panel">
+              <h3>Host File Browser</h3>
+              <div class="path-row">
+                <input id="fsPath" value="." />
+                <button id="fsListBtn">List</button>
+              </div>
+              <ul id="fsEntries"></ul>
+              <form id="uploadForm">
+                <label
+                  >Upload to current directory:
+                  <input type="file" id="uploadInput" multiple />
+                </label>
+                <button type="submit">Upload Files</button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Shell Panel -->
+        <div id="panel-shell" class="tab-panel hidden">
+          <div class="panel-grid">
+            <div class="panel" id="shellPanel">
+              <h3>Host Shell (If Enabled)</h3>
+              <div class="small muted">
+                Disabled by default on server. Enable by ALLOW_SHELL=true.
+              </div>
+              <div class="shell-controls">
+                <input id="shellCommand" placeholder="command" />
+                <input id="shellArgs" placeholder="args (space separated)" />
+                <button id="runShellBtn">Run</button>
+              </div>
+              <pre id="shellOutput" class="shell-output"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="app-footer">
+        <div class="footer-content">
+          <button id="disconnectBtn" class="disconnect-btn">Disconnect</button>
+          <div class="footer-info">
+            <span
+              >Connected as: <strong id="currentDeviceDisplay">-</strong></span
+            >
+          </div>
+        </div>
+      </footer>
+    </section>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
 </html>
