@@ -101,7 +101,8 @@ function handleMessage(raw) {
       setStatus('Connected');
       els.authSection.classList.add('hidden');
       els.mainUI.classList.remove('hidden');
-      // If shell not allowed server side, hide panel (server didn't tell us, so we keep UI; could add meta message).
+      // If shell not allowed server side, hide panel.
+      if(!msg.shell) els.shellPanel.classList.add('hidden'); 
       break;
 
     case MessageTypes.ERROR:
@@ -206,6 +207,10 @@ function sendClipboard(text) {
 }
 
 function addClipboardEntry(msg, localOrigin) {
+  // If localOrigin is set to true, don't add to the clipboard panel
+  if(localOrigin) return; 
+
+  // If not of localorigin, add to the clipboard panel. 
   const li = document.createElement('li');
   const ts = new Date(msg.timestamp || Date.now()).toLocaleTimeString();
   const from = msg.host ? 'HOST' : (msg.from || 'unknown');
@@ -476,4 +481,3 @@ function authFetch() {
   return { headers: { 'x-auth-token': getToken() } };
 }
 
-// Initial automatic directory listing after connect is done client-side if desired.
