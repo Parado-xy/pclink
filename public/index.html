@@ -26,7 +26,7 @@
             </svg>
           </span>
           PC Link
-          <span class="version">v2.0</span>
+          <span class="version">v2.1</span>
         </h1>
         <div class="header-controls">
           <div id="connection-status" class="status disconnected">
@@ -47,6 +47,15 @@
           </p>
         </div>
 
+        <div class="auth-mode-toggle">
+          <button type="button" id="modeTokenBtn" class="mode-btn active">
+            Token
+          </button>
+          <button type="button" id="modePairBtn" class="mode-btn">
+            Pairing code
+          </button>
+        </div>
+
         <form id="connectionForm" class="connection-form">
           <div class="form-group">
             <label for="serverUrl">Server URL</label>
@@ -62,18 +71,39 @@
             >
           </div>
 
-          <div class="form-group">
-            <label for="token">Authentication Token</label>
-            <input
-              id="token"
-              type="password"
-              placeholder="Your access token"
-              required
-              aria-describedby="token-help"
-            />
-            <small id="token-help"
-              >Get this from your server administrator</small
-            >
+          <div id="tokenModeFields">
+            <div class="form-group">
+              <label for="token">Authentication Token</label>
+              <input
+                id="token"
+                type="password"
+                placeholder="Your access token"
+                aria-describedby="token-help"
+              />
+              <small id="token-help"
+                >Master SERVER_TOKEN or a per-device token</small
+              >
+            </div>
+          </div>
+
+          <div id="pairModeFields" class="hidden">
+            <div class="form-group">
+              <label for="pairingCode">6-digit pairing code</label>
+              <input
+                id="pairingCode"
+                type="text"
+                inputmode="numeric"
+                pattern="[0-9]{6}"
+                maxlength="6"
+                placeholder="123456"
+                aria-describedby="pairingCode-help"
+                autocomplete="one-time-code"
+              />
+              <small id="pairingCode-help"
+                >Ask an already-connected device to generate a code (valid 2
+                min)</small
+              >
+            </div>
           </div>
 
           <div class="form-group">
@@ -113,6 +143,17 @@
         </div>
         <div class="quick-actions">
           <button
+            id="generatePairCodeBtn"
+            class="quick-btn"
+            title="Generate pairing code for a new device"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M17,7H22V17H17V19A1,1 0 0,0 18,20H20V22H17.5C16.95,22 16,21.55 16,21C16,21.55 15.05,22 14.5,22H12V20H14A1,1 0 0,0 15,19V5A1,1 0 0,0 14,4H12V2H14.5C15.05,2 16,2.45 16,3C16,2.45 16.95,2 17.5,2H20V4H18A1,1 0 0,0 17,5V7M2,7H13V9H4V15H13V17H2V7M20,9H17V15H20V9Z"
+              />
+            </svg>
+          </button>
+          <button
             id="quickClipboardBtn"
             class="quick-btn"
             title="Quick clipboard sync"
@@ -130,6 +171,19 @@
               />
             </svg>
           </button>
+        </div>
+      </div>
+
+      <!-- Pairing code overlay / panel -->
+      <div id="pairCodePanel" class="pair-code-panel hidden">
+        <div class="pair-code-card">
+          <h3>Pairing code</h3>
+          <p class="small">
+            Enter this code on the new device within
+            <span id="pairCodeCountdown">120</span>s
+          </p>
+          <div id="pairCodeDisplay" class="pair-code-display">------</div>
+          <button id="pairCodeCloseBtn" class="secondary-btn">Close</button>
         </div>
       </div>
 

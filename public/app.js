@@ -5,6 +5,7 @@ const els = {
   mainUI: document.getElementById("main-ui"),
   serverUrl: document.getElementById("serverUrl"),
   token: document.getElementById("token"),
+  pairingCode: document.getElementById("pairingCode"),
   deviceId: document.getElementById("deviceId"),
   connectBtn: document.getElementById("connectBtn"),
   remember: document.getElementById("remember"),
@@ -12,7 +13,17 @@ const els = {
   deviceList: document.getElementById("deviceList"),
   deviceCount: document.querySelector(".device-count"),
 
-  // Quick action buttons
+  modeTokenBtn: document.getElementById("modeTokenBtn"),
+  modePairBtn: document.getElementById("modePairBtn"),
+  tokenModeFields: document.getElementById("tokenModeFields"),
+  pairModeFields: document.getElementById("pairModeFields"),
+
+  generatePairCodeBtn: document.getElementById("generatePairCodeBtn"),
+  pairCodePanel: document.getElementById("pairCodePanel"),
+  pairCodeDisplay: document.getElementById("pairCodeDisplay"),
+  pairCodeCountdown: document.getElementById("pairCodeCountdown"),
+  pairCodeCloseBtn: document.getElementById("pairCodeCloseBtn"),
+
   quickClipboardBtn: document.getElementById("quickClipboardBtn"),
   quickFileBtn: document.getElementById("quickFileBtn"),
 
@@ -56,18 +67,57 @@ const tabs = {
 
 let ws = null;
 let currentDeviceId = null;
+let currentToken = null; // the token actually used for this session
+let authMode = "token"; // "token" | "pair"
 const fileTransfers = new Map();
 const MAX_CHUNK = 64 * 1024;
+let pairCountdownTimer = null;
+
+const CREDS_KEY = "pcLinkCreds";
 
 (function restore() {
-  const saved = JSON.parse(localStorage.getItem("pcLinkCreds") || "null");
-  if (saved) {
-    els.serverUrl.value = saved.serverUrl || "";
-    els.token.value = saved.token || "";
-    els.deviceId.value = saved.deviceId || "";
-    els.remember.checked = true;
+  try {
+    const saved = JSON.parse(localStorage.getItem(CREDS_KEY) || "null");
+    if (saved) {
+      els.serverUrl.value = saved.serverUrl || "";
+      els.token.value = saved.token || "";
+      els.deviceId.value = saved.deviceId || "";
+      els.remember.checked = true;
+    }
+  } catch {
+    // ignore corrupt storage
   }
 })();
+
+function saveCreds(serverUrl, token, deviceId) {
+  if (els.remember.checked) {
+    localStorage.setItem(
+      CREDS_KEY,
+      JSON.stringify({ serverUrl, token, deviceId })
+    );
+  } else {
+    localStorage.removeItem(CREDS_KEY);
+  }
+}
+
+// Auth mode toggle
+els.modeTokenBtn?.addEventListener("click", () => setAuthMode("token"));
+els.modePairBtn?.addEventListener("click", () => setAuthMode("pair"));
+
+function setAuthMode(mode) {
+  authMode = mode;
+  els.modeTokenBtn.classList.toggle("active", mode === "token");
+  els.modePairBtn.classList.toggle("active", mode === "pair");
+  els.tokenModeFields.classList.toggle("hidden", mode !== "token");
+  els.pairModeFields.classList.toggle("hidden", mode !== "pair");
+  if (mode === "token") {
+    els.token.required = true;
+    els.pairingCode.required = false;
+  } else {
+    els.token.required = false;
+    els.pairingCode.required = true;
+  }
+}
 
 els.connectBtn.addEventListener("click", (e) => connect(e));
 els.disconnectBtn.addEventListener("click", () => {
@@ -81,14 +131,13 @@ function setStatus(state, details = "") {
   els.status.classList.toggle("connecting", state === "Connecting...");
 }
 
-function connect(e) {
+async function connect(e) {
   e.preventDefault();
   const url = els.serverUrl.value.trim();
-  const token = els.token.value.trim();
   let deviceId = els.deviceId.value.trim();
 
-  if (!url || !token) {
-    setStatus("Error", "URL and token required");
+  if (!url) {
+    setStatus("Error", "Server URL required");
     return;
   }
 
@@ -97,32 +146,67 @@ function connect(e) {
     els.deviceId.value = deviceId;
   }
 
-  // Store the current device ID
-  currentDeviceId = deviceId;
+  let token;
 
-  // Update the footer display immediately
+  if (authMode === "pair") {
+    const code = (els.pairingCode.value || "").trim();
+    if (!/^[0-9]{6}$/.test(code)) {
+      setStatus("Error", "Enter a valid 6-digit pairing code");
+      return;
+    }
+    setStatus("Connecting...", "exchanging pairing code");
+    try {
+      const httpBase = url.replace(/^ws/, "http");
+      const res = await fetch(`${httpBase}/api/pair/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, deviceId, name: deviceId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus("Error", data.error || "Pairing failed");
+        return;
+      }
+      token = data.token;
+      deviceId = data.deviceId || deviceId;
+      els.deviceId.value = deviceId;
+      els.token.value = token; // so REST calls work and user can copy it
+      showToast(
+        "Paired! Token saved for this device. Keep it if you clear browser storage.",
+        "success"
+      );
+    } catch (err) {
+      setStatus("Error", err.message || "Pairing request failed");
+      return;
+    }
+  } else {
+    token = els.token.value.trim();
+    if (!token) {
+      setStatus("Error", "Token required");
+      return;
+    }
+  }
+
+  currentDeviceId = deviceId;
+  currentToken = token;
   els.currentDeviceDisplay.textContent = deviceId;
 
-  if (els.remember.checked) {
-    localStorage.setItem("pclink-server", url);
-    localStorage.setItem("pclink-token", token);
-    localStorage.setItem("pclink-deviceId", deviceId);
-  }
+  saveCreds(url, token, deviceId);
 
   setStatus("Connecting...");
 
   try {
     ws = new WebSocket(url);
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "auth", token, deviceId }));
+      ws.send(JSON.stringify({ type: MessageTypes.AUTH, token, deviceId }));
     };
     ws.onmessage = (e) => handleMessage(e.data);
     ws.onclose = () => {
       setStatus("Disconnected");
       els.authSection.classList.remove("hidden");
       els.mainUI.classList.add("hidden");
-      // Reset footer display on disconnect
       els.currentDeviceDisplay.textContent = "-";
+      hidePairCodePanel();
     };
     ws.onerror = () => setStatus("Error", "Connection failed");
   } catch (err) {
@@ -131,32 +215,31 @@ function connect(e) {
 }
 
 function handleMessage(raw) {
-  const msg = JSON.parse(raw);
-
-  if (msg.type === "auth_success") {
-    setStatus("Connected");
-    els.authSection.classList.add("hidden");
-    els.mainUI.classList.remove("hidden");
-    // Make sure device display is updated on successful connection
-    els.currentDeviceDisplay.textContent =
-      currentDeviceId || msg.deviceId || "Unknown";
-  } else if (msg.type === "auth_error") {
-    setStatus("Error", msg.message);
-  } else if (msg.type === "devices") {
-    updateDeviceList(msg.devices);
+  let msg;
+  try {
+    msg = JSON.parse(raw);
+  } catch {
+    return;
   }
+
   switch (msg.type) {
     case MessageTypes.ACK:
       currentDeviceId = msg.deviceId;
       setStatus("Connected");
       els.authSection.classList.add("hidden");
       els.mainUI.classList.remove("hidden");
-      // If shell not allowed server side, hide panel.
-      if (!msg.shell) els.shellPanel.classList.add("hidden");
+      els.currentDeviceDisplay.textContent = currentDeviceId || "Unknown";
+      if (!msg.shell) els.shellPanel?.classList.add("hidden");
       break;
 
     case MessageTypes.ERROR:
       console.error("Error:", msg.error);
+      if (!els.mainUI.classList.contains("hidden") === false) {
+        // still on auth screen
+        setStatus("Error", msg.error);
+      } else {
+        showToast(msg.error || "Server error", "error");
+      }
       break;
 
     case MessageTypes.DEVICE_LIST:
@@ -164,7 +247,10 @@ function handleMessage(raw) {
       break;
 
     case MessageTypes.PRESENCE:
-      // Could highlight online/offline; skipped for brevity.
+      break;
+
+    case MessageTypes.PAIR_CODE:
+      showPairCode(msg.code, msg.expiresInSeconds || 120);
       break;
 
     case MessageTypes.CLIPBOARD_UPDATE:
@@ -206,6 +292,40 @@ function handleMessage(raw) {
   }
 }
 
+/* Pairing code UI */
+els.generatePairCodeBtn?.addEventListener("click", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showToast("Not connected", "error");
+    return;
+  }
+  ws.send(JSON.stringify({ type: MessageTypes.PAIR_REQUEST }));
+});
+
+els.pairCodeCloseBtn?.addEventListener("click", hidePairCodePanel);
+
+function showPairCode(code, seconds) {
+  els.pairCodeDisplay.textContent = code;
+  els.pairCodePanel.classList.remove("hidden");
+  let remaining = seconds;
+  els.pairCodeCountdown.textContent = String(remaining);
+  if (pairCountdownTimer) clearInterval(pairCountdownTimer);
+  pairCountdownTimer = setInterval(() => {
+    remaining -= 1;
+    els.pairCodeCountdown.textContent = String(Math.max(0, remaining));
+    if (remaining <= 0) {
+      hidePairCodePanel();
+    }
+  }, 1000);
+}
+
+function hidePairCodePanel() {
+  els.pairCodePanel?.classList.add("hidden");
+  if (pairCountdownTimer) {
+    clearInterval(pairCountdownTimer);
+    pairCountdownTimer = null;
+  }
+}
+
 function updateDeviceList(devices) {
   els.deviceList.innerHTML = "";
   const selected = els.fileTarget.value;
@@ -233,7 +353,6 @@ function updateDeviceList(devices) {
     els.fileTarget.value = selected;
   }
 
-  // Update the device count display using the els reference
   const deviceCount = devices.length;
   if (els.deviceCount) {
     els.deviceCount.textContent = `${deviceCount} device${deviceCount === 1 ? "" : "s"} connected`;
@@ -275,10 +394,8 @@ function sendClipboard(text) {
 }
 
 function addClipboardEntry(msg, localOrigin) {
-  // If localOrigin is set to true, don't add to the clipboard panel
   if (localOrigin) return;
 
-  // If not of localorigin, add to the clipboard panel.
   const li = document.createElement("li");
   const ts = new Date(msg.timestamp || Date.now()).toLocaleTimeString();
   const from = msg.host ? "HOST" : msg.from || "unknown";
@@ -300,7 +417,7 @@ function addClipboardEntry(msg, localOrigin) {
 }
 
 function updateHostClipboard(msg) {
-  els.hostClipboardLatest.textContent = msg.data.slice(0, 5000);
+  els.hostClipboardLatest.textContent = (msg.data || "").slice(0, 5000);
 }
 
 els.setHostClipboardBtn.addEventListener("click", () => {
@@ -413,7 +530,6 @@ function cancelIncomingFile(msg) {
   }
 }
 
-// Enhanced file transfer functions with better UX
 function addIncomingFileRow(fileId, name, received, size) {
   const li = document.createElement("li");
   li.dataset.fileId = fileId;
@@ -432,7 +548,6 @@ function addIncomingFileRow(fileId, name, received, size) {
   `;
   els.incomingFiles.prepend(li);
 
-  // Limit items
   while (els.incomingFiles.children.length > 50) {
     els.incomingFiles.removeChild(els.incomingFiles.lastChild);
   }
@@ -476,7 +591,6 @@ els.fsEntries.addEventListener("click", (e) => {
   } else if (type === "file") {
     downloadFile(current === "." ? name : current + "/" + name);
   } else if (li.dataset.up === "true") {
-    // go up
     const parts = current.split("/").filter(Boolean);
     parts.pop();
     const parent = parts.join("/") || ".";
@@ -520,6 +634,8 @@ function downloadFile(rel) {
   const link = document.createElement("a");
   link.href = apiUrl(`/api/download?path=${encodeURIComponent(rel)}`);
   link.download = rel.split("/").pop();
+  // Attach token via a workaround is hard for <a>; user may need to be same-origin.
+  // Prefer fetch + blob for authenticated download if needed later.
   link.target = "_blank";
   link.rel = "noopener";
   link.click();
@@ -564,9 +680,6 @@ function appendShellOutput(stream, text) {
   els.shellOutput.scrollTop = els.shellOutput.scrollHeight;
 }
 
-/* Drag & Drop upload to host directory not implemented here intentionally
-   to avoid accidental mass uploads. Could add similar to peer transfer. */
-
 /* Peer File Drag & Drop */
 ["dragenter", "dragover"].forEach((ev) => {
   els.dropZone.addEventListener(ev, (e) => {
@@ -590,7 +703,7 @@ function appendShellOutput(stream, text) {
 
 /* Utilities */
 function escapeHtml(str) {
-  return str.replace(
+  return String(str).replace(
     /[&<>]/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]
   );
@@ -612,21 +725,19 @@ function base64ToUint8Array(b64) {
 
 function apiBase() {
   const url = els.serverUrl.value.trim();
-  // Convert wss:// -> https://  ws:// -> http://
   return url.replace(/^ws/, "http");
 }
 function apiUrl(path) {
   return apiBase() + path;
 }
 function getToken() {
-  return els.token.value.trim();
+  return currentToken || els.token.value.trim();
 }
 function authFetch() {
   return { headers: { "x-auth-token": getToken() } };
 }
 
 function switchTab(activeTab) {
-  // Hide all panels
   document
     .querySelectorAll(".tab-panel")
     .forEach((panel) => panel.classList.add("hidden"));
@@ -634,17 +745,14 @@ function switchTab(activeTab) {
     .querySelectorAll(".tab-button")
     .forEach((btn) => btn.classList.remove("active"));
 
-  // Show active panel and button
   document.getElementById(`panel-${activeTab}`).classList.remove("hidden");
   document.getElementById(`tab-${activeTab}`).classList.add("active");
 }
 
-// Add event listeners for tabs
 Object.keys(tabs).forEach((tab) => {
   tabs[tab]?.addEventListener("click", () => switchTab(tab));
 });
 
-// Add event listeners for quick action buttons
 els.quickClipboardBtn?.addEventListener("click", async () => {
   try {
     const text = await navigator.clipboard.readText();
@@ -660,14 +768,12 @@ els.quickClipboardBtn?.addEventListener("click", async () => {
 });
 
 els.quickFileBtn?.addEventListener("click", () => {
-  // Switch to files tab and focus on file input
   switchTab("files");
   setTimeout(() => {
     els.fileInput?.click();
   }, 100);
 });
 
-// Add toast notification function
 function showToast(message, type = "info") {
   const toast = document.createElement("div");
   toast.className = `toast toast-${type}`;

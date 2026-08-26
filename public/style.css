@@ -126,7 +126,6 @@ h1 {
   padding: 1.5rem;
   box-shadow: var(--shadow-md);
   transition: var(--transition);
-  /* Fix overflow issues */
   overflow: hidden;
   word-wrap: break-word;
   min-height: fit-content;
@@ -168,6 +167,47 @@ h1 {
   text-align: center;
 }
 
+/* Auth mode toggle */
+.auth-mode-toggle {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  background: #14181d;
+  padding: 0.25rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+
+.mode-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.85rem;
+  min-height: auto;
+  box-shadow: none;
+}
+
+.mode-btn:hover {
+  background: var(--panel-bg-hover);
+  color: var(--fg);
+  transform: none;
+  box-shadow: none;
+}
+
+.mode-btn.active {
+  background: var(--accent);
+  color: white;
+}
+
+.mode-btn.active:hover {
+  background: var(--accent-hover);
+  color: white;
+}
+
 label {
   display: flex;
   flex-direction: column;
@@ -188,7 +228,6 @@ button {
   color: var(--fg);
   padding: 0.75rem 0.8rem;
   transition: var(--transition);
-  /* Prevent overflow */
   width: 100%;
   max-width: 100%;
 }
@@ -212,7 +251,7 @@ button {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  min-height: 44px; /* Better touch targets */
+  min-height: 44px;
 }
 
 button::before {
@@ -262,7 +301,6 @@ button:disabled::before {
   font-size: 0.8rem;
   margin-top: 0.5rem;
   margin-left: 0;
-  
 }
 
 .remember input[type="checkbox"] {
@@ -274,7 +312,7 @@ button:disabled::before {
 }
 
 .hidden {
-  display: none;
+  display: none !important;
 }
 
 .panels {
@@ -340,7 +378,6 @@ ul {
   position: relative;
   transition: var(--transition);
   cursor: pointer;
-  /* Fix text overflow */
   word-wrap: break-word;
   overflow-wrap: break-word;
   hyphens: auto;
@@ -361,9 +398,8 @@ ul {
   border-color: var(--accent);
 }
 
-/* Enhanced clipboard history styling */
 #clipboardHistory li {
-  padding-right: 4rem; /* Make room for button */
+  padding-right: 4rem;
   min-height: 3rem;
   display: flex;
   align-items: center;
@@ -400,7 +436,6 @@ ul {
   transform: translateY(-50%) scale(1.05);
 }
 
-/* Enhanced browser clipboard buttons */
 #readLocalClipboardBtn,
 #sendManualClipboardBtn {
   background: linear-gradient(135deg, var(--success), #26d773);
@@ -422,7 +457,6 @@ textarea {
   line-height: 1.5;
 }
 
-/* Enhanced mono text display with proper overflow handling */
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: rgba(20, 24, 29, 0.5);
@@ -431,13 +465,11 @@ textarea {
   border: 1px solid var(--border);
   font-size: 0.8rem;
   line-height: 1.4;
-  /* Handle long text properly */
   word-wrap: break-word;
   overflow-wrap: break-word;
   white-space: pre-wrap;
   max-height: 200px;
   overflow-y: auto;
-  /* Custom scrollbar */
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
@@ -467,7 +499,6 @@ textarea {
   color: var(--muted);
 }
 
-/* Enhanced file transfer section */
 #dropZone {
   border: 2px dashed var(--border);
   padding: 2rem;
@@ -493,7 +524,6 @@ textarea {
   transform: scale(1.02);
 }
 
-/* File transfer controls layout */
 .file-transfer-controls {
   display: flex;
   flex-direction: column;
@@ -546,7 +576,6 @@ textarea {
   padding: 0.75rem 1rem;
 }
 
-/* Form styling improvements */
 form {
   display: flex;
   flex-direction: column;
@@ -558,7 +587,6 @@ form label {
   margin-bottom: 0;
 }
 
-/* Override button width for forms */
 form button[type="submit"] {
   width: auto;
   max-width: 200px;
@@ -567,7 +595,6 @@ form button[type="submit"] {
   align-self: flex-start;
 }
 
-/* Shell controls */
 .shell-controls {
   display: flex;
   gap: 0.8rem;
@@ -647,7 +674,6 @@ footer {
   background: linear-gradient(135deg, var(--danger-hover), #e63946);
 }
 
-/* Enhanced clipboard history */
 .clipboard-list {
   max-height: 400px;
   overflow-y: auto;
@@ -665,7 +691,6 @@ footer {
   min-width: 0;
 }
 
-/* Responsive enhancements */
 @media (max-width: 768px) {
   .tab-navigation {
     border-radius: 0;
@@ -686,7 +711,6 @@ footer {
     padding: 1rem;
   }
 
-  /* Stack file controls vertically on mobile */
   .file-control-row {
     grid-template-columns: 1fr;
     gap: 0.5rem;
@@ -704,25 +728,21 @@ footer {
   }
 }
 
-/* Loading states */
 .loading {
   opacity: 0.6;
   pointer-events: none;
 }
 
-/* Success states */
 .success {
   border-color: var(--success);
   background: var(--success-light);
 }
 
-/* Error states */
 .error {
   border-color: var(--danger);
   background: rgba(255, 71, 87, 0.1);
 }
 
-/* Utility classes for better layout control */
 .flex-row {
   display: flex;
   gap: 0.8rem;
@@ -744,9 +764,6 @@ footer {
   flex-shrink: 0;
 }
 
-/* Add these enhancements to your existing CSS */
-
-/* Loading states and animations */
 .loading-spinner {
   display: flex;
   align-items: center;
@@ -780,7 +797,6 @@ footer {
   }
 }
 
-/* Toast notifications */
 .toast-container {
   position: fixed;
   top: 20px;
@@ -818,7 +834,6 @@ footer {
   border-left: 4px solid var(--accent);
 }
 
-/* Enhanced tab navigation */
 .tab-navigation {
   display: flex;
   background: var(--panel-bg);
@@ -878,7 +893,6 @@ footer {
   padding: 2rem;
 }
 
-/* Enhanced panel grid */
 .panel-grid {
   display: grid;
   gap: 1.5rem;
@@ -886,7 +900,6 @@ footer {
   margin-bottom: 2rem;
 }
 
-/* Enhanced device bar */
 .device-bar {
   display: flex;
   justify-content: space-between;
@@ -918,7 +931,46 @@ footer {
   border-color: var(--accent);
 }
 
-/* Enhanced file transfer items */
+/* Pairing code panel */
+.pair-code-panel {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1500;
+}
+
+.pair-code-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  text-align: center;
+  box-shadow: var(--shadow-lg);
+  max-width: 360px;
+  width: 90%;
+}
+
+.pair-code-card h3 {
+  margin: 0 0 0.5rem;
+  color: var(--fg);
+}
+
+.pair-code-display {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: 0.35em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--accent);
+  margin: 1.25rem 0;
+  padding: 0.75rem;
+  background: #14181d;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border);
+}
+
 .file-transfer-item {
   display: flex;
   align-items: center;
@@ -986,72 +1038,12 @@ footer {
   transform: scale(1.1);
 }
 
-/* Enhanced clipboard history */
-.clipboard-list {
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.history-controls {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-  align-items: center;
-}
-
-#historySearch {
-  flex: 1;
-  min-width: 0;
-}
-
-/* Responsive enhancements */
-@media (max-width: 768px) {
-  .tab-navigation {
-    border-radius: 0;
-  }
-
-  .tab-content {
-    border-radius: 0;
-  }
-
-  .device-bar {
-    padding: 1rem;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .panel-grid {
-    grid-template-columns: 1fr;
-    padding: 1rem;
-  }
-
-  /* Stack file controls vertically on mobile */
-  .file-control-row {
-    grid-template-columns: 1fr;
-    gap: 0.5rem;
-  }
-
-  .app-footer {
-    flex-direction: column;
-    gap: 0.5rem;
-    text-align: center;
-  }
-
-  .footer-content {
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-}
-
 .form-actions {
   display: flex;
   flex-direction: column;
   gap: 1rem;
   align-items: stretch;
 }
-
-
-
 
 .connect-btn {
   align-self: center;
@@ -1068,5 +1060,33 @@ footer {
   font-size: 1rem;
   cursor: pointer;
   transition: var(--transition);
-  order: 1; /* Ensures button comes after checkbox */
+  order: 1;
+}
+
+.secondary-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  min-height: auto;
+  padding: 0.5rem 1rem;
+}
+
+.secondary-btn:hover {
+  background: var(--panel-bg-hover);
+  border-color: var(--border-light);
+  transform: none;
+}
+
+.app-footer {
+  padding: 1rem 2rem;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+}
+
+.footer-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 1600px;
+  margin: 0 auto;
 }

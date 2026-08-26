@@ -8,18 +8,34 @@ import fs from "fs";
 import { CONFIG } from "./config.js";
 import { MessageTypes, safeParse } from "../shared/protocol.js";
 import { HostIntegration } from "./hostIntegration.js";
+import { deviceStore } from "./deviceStore.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.use(express.json());
 
-// Middleware: token check for REST
+/**
+ * Resolve auth: master SERVER_TOKEN or a registered per-device token.
+ * Returns { kind: 'master' } | { kind: 'device', deviceId } | null.
+ */
+function resolveAuth(token) {
+  if (!token || typeof token !== "string") return null;
+  if (token === CONFIG.TOKEN) return { kind: "master" };
+  const deviceId = deviceStore.validateToken(token);
+  if (deviceId) return { kind: "device", deviceId };
+  return null;
+}
+
+// Middleware: token check for REST (master or per-device)
 function authMiddleware(req, res, next) {
   const token = req.headers["x-auth-token"];
-  if (token !== CONFIG.TOKEN) {
+  const auth = resolveAuth(token);
+  if (!auth) {
     return res.status(401).json({ error: "Unauthorized" });
   }
+  req.auth = auth;
   next();
 }
 
@@ -30,8 +46,75 @@ app.get("/shared/protocol.js", (req, res) => {
 
 app.use(express.static(path.join(__dirname, "..", "public")));
 
-// TODO: Make this endpoint actually produce something important.
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// ---- Pairing endpoints ----
+
+/**
+ * Start pairing: requires an already-authenticated token (master or device).
+ * Returns a short-lived 6-digit code.
+ */
+app.post("/api/pair/start", authMiddleware, (_req, res) => {
+  const { code, expiresAt } = deviceStore.createPairingCode(CONFIG.PAIRING_TTL_MS);
+  res.json({
+    code,
+    expiresAt,
+    expiresInSeconds: Math.round((expiresAt - Date.now()) / 1000),
+  });
+});
+
+/**
+ * Complete pairing: public endpoint. Exchanges a valid pairing code for a
+ * brand-new per-device token. The master SERVER_TOKEN is never exposed.
+ */
+app.post("/api/pair/complete", (req, res) => {
+  const { code, deviceId: requestedId, name } = req.body || {};
+  if (!code) {
+    return res.status(400).json({ error: "code required" });
+  }
+  if (!deviceStore.consumePairingCode(String(code))) {
+    return res.status(401).json({ error: "Invalid or expired pairing code" });
+  }
+
+  let deviceId = (requestedId || "").trim();
+  if (!deviceId) {
+    deviceId = `device-${uuidv4().slice(0, 8)}`;
+  }
+  // Avoid colliding with an existing registered device id
+  if (deviceStore.hasDevice(deviceId)) {
+    deviceId = `${deviceId}-${uuidv4().slice(0, 4)}`;
+  }
+
+  const token = deviceStore.createDevice(deviceId, name || deviceId);
+  res.json({
+    deviceId,
+    token,
+    message:
+      "Save this token — it will not be shown again. Use it as your authentication token.",
+  });
+});
+
+/** List registered devices (auth required). */
+app.get("/api/devices", authMiddleware, (_req, res) => {
+  res.json({ devices: deviceStore.list() });
+});
+
+/** Revoke a device token (auth required). */
+app.delete("/api/devices/:deviceId", authMiddleware, (req, res) => {
+  const ok = deviceStore.revoke(req.params.deviceId);
+  if (!ok) return res.status(404).json({ error: "Device not found" });
+  // Kick the live connection if present
+  const entry = devices.get(req.params.deviceId);
+  if (entry) {
+    try {
+      entry.ws.close(4001, "Revoked");
+    } catch {}
+    devices.delete(req.params.deviceId);
+    broadcastPresence(req.params.deviceId, "offline");
+    sendDeviceListAll();
+  }
+  res.json({ ok: true });
+});
 
 // File system API
 app.get("/api/dir", authMiddleware, (req, res) => {
@@ -62,26 +145,19 @@ app.get("/api/download", authMiddleware, (req, res) => {
   }
 });
 
-// Configure mutler for file upload.
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: CONFIG.MAX_FILE_SIZE },
 });
 
 app.post("/api/upload", authMiddleware, upload.any(), (req, res) => {
-  // The file being uploaded to the host will either land in the
-  // query destination or the "root" of the user's given ROOT_DIR
   const dest = req.query.dest || ".";
   try {
-    // NOTE: The dest passed here must be  in the users specified ROOT_DIR
     const destAbs = host.resolvePath(dest);
-    // If the directory does not exist, make the directory.
     if (!fs.existsSync(destAbs)) fs.mkdirSync(destAbs, { recursive: true });
-    // If the destination path exists, but is not a directory throw an error.
     if (!fs.statSync(destAbs).isDirectory())
       throw new Error("Destination not a directory");
 
-    // We write every file synchronously to the output
     const saved = [];
     for (const f of req.files) {
       const outPath = path.join(destAbs, f.originalname);
@@ -102,6 +178,11 @@ const server = app.listen(CONFIG.PORT, CONFIG.HOST, () => {
     CONFIG.ALLOW_SHELL,
     "Clipboard set allowed:",
     CONFIG.ALLOW_REMOTE_CLIPBOARD_SET
+  );
+  console.log(
+    "Registered devices:",
+    deviceStore.list().length,
+    "(devices.json)"
   );
 });
 
@@ -138,10 +219,8 @@ function broadcastPresence(deviceId, status) {
   });
 }
 
-// Host integration instance
 const host = new HostIntegration({
   broadcastFn: (msg) => {
-    // Only broadcast host clipboard to others
     broadcast({ ...msg, from: "host" });
   },
 });
@@ -158,25 +237,36 @@ wss.on("connection", (ws) => {
       return send(ws, { type: MessageTypes.ERROR, error: "Invalid JSON" });
 
     if (msg.type === MessageTypes.AUTH) {
-      if (msg.token !== CONFIG.TOKEN) {
+      const auth = resolveAuth(msg.token);
+      if (!auth) {
         return send(ws, { type: MessageTypes.ERROR, error: "Unauthorized" });
       }
+
       authed = true;
-      deviceId = (msg.deviceId || "").trim() || `device-${randomUUID()}`;
+
+      // Prefer client-supplied deviceId; fall back to the one bound to the token,
+      // or generate a new one for master-token logins.
+      if (auth.kind === "device") {
+        deviceId =
+          (msg.deviceId || "").trim() || auth.deviceId || `device-${uuidv4().slice(0, 8)}`;
+      } else {
+        deviceId =
+          (msg.deviceId || "").trim() || `device-${uuidv4().slice(0, 8)}`;
+      }
+
       if (devices.has(deviceId)) {
-        // Replace
         try {
           devices.get(deviceId).ws.close(4000, "Replaced");
         } catch {}
       }
       devices.set(deviceId, { ws, lastSeen: Date.now() });
 
-      // Let's send shell: true | false depending on the user's config.
       send(ws, {
         type: MessageTypes.ACK,
         deviceId,
         role: deviceId === "host" ? "host" : "client",
         shell: CONFIG.ALLOW_SHELL,
+        authKind: auth.kind,
       });
 
       broadcastPresence(deviceId, "online");
@@ -192,14 +282,24 @@ wss.on("connection", (ws) => {
     if (entry) entry.lastSeen = Date.now();
 
     switch (msg.type) {
-      // Existing clipboard broadcast (client ↔ client)
+      case MessageTypes.PAIR_REQUEST: {
+        const { code, expiresAt } = deviceStore.createPairingCode(
+          CONFIG.PAIRING_TTL_MS
+        );
+        send(ws, {
+          type: MessageTypes.PAIR_CODE,
+          code,
+          expiresAt,
+          expiresInSeconds: Math.round((expiresAt - Date.now()) / 1000),
+        });
+        break;
+      }
+
       case MessageTypes.CLIPBOARD_UPDATE: {
         const enriched = { ...msg, from: deviceId, timestamp: Date.now() };
-        // If the message has a Destination, forward to that client.
         if (msg.to) {
           forward(msg.to, enriched);
         } else {
-          // Else, broadcast the message.
           broadcast(enriched, deviceId);
         }
         break;
@@ -220,7 +320,6 @@ wss.on("connection", (ws) => {
         break;
       }
 
-      // Host clipboard set request
       case MessageTypes.HOST_CLIPBOARD_SET: {
         if (!CONFIG.ALLOW_REMOTE_CLIPBOARD_SET) {
           return send(ws, {
@@ -234,28 +333,12 @@ wss.on("connection", (ws) => {
             error: "Invalid clipboard data",
           });
         }
-        // Set the host's clipboard
-        host
-          .setClipboard(msg.data)
-          // NOTE: I (ojalla) commented this out because it causes double broadcasting to happen. 
-          // If we set the clipboard, we watch for that and send out a brodcast. 
-          // This is not necessary. 
-          // .then(() => {
-          //   // Force immediate broadcast
-          //   broadcast({
-          //     type: MessageTypes.HOST_CLIPBOARD_UPDATE,
-          //     data: msg.data,
-          //     from: "host",
-          //     timestamp: Date.now(),
-          //   });
-          // })
-          .catch((e) => {
-            send(ws, { type: MessageTypes.ERROR, error: e.message });
-          });
+        host.setClipboard(msg.data).catch((e) => {
+          send(ws, { type: MessageTypes.ERROR, error: e.message });
+        });
         break;
       }
 
-      // File transfers (browser ↔ browser)
       case MessageTypes.FILE_SEND_INIT: {
         const { fileId, to, size } = msg;
         if (!fileId || !to || !size) {
@@ -317,7 +400,6 @@ wss.on("connection", (ws) => {
         break;
       }
 
-      // File system listing via WebSocket (optional; REST already exists)
       case MessageTypes.FS_LIST: {
         try {
           const rel = msg.path || ".";
@@ -337,7 +419,6 @@ wss.on("connection", (ws) => {
         break;
       }
 
-      // Shell commands
       case MessageTypes.SHELL_RUN: {
         if (!CONFIG.ALLOW_SHELL) {
           return send(ws, {
@@ -358,8 +439,6 @@ wss.on("connection", (ws) => {
           host.runShell(
             command,
             args,
-            // stream: ["stdout" | "stderr"]
-            // text: [string output]
             (stream, text) => {
               send(ws, {
                 type: MessageTypes.SHELL_OUTPUT,
@@ -368,7 +447,6 @@ wss.on("connection", (ws) => {
                 data: text,
               });
             },
-            // code: ["Shell Exit Code"]
             (code) => {
               send(ws, {
                 type: MessageTypes.SHELL_DONE,
