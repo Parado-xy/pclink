@@ -19,7 +19,11 @@ export const MessageTypes = {
   FS_LIST_RESULT: 'fs_list_result',
   SHELL_RUN: 'shell_run',
   SHELL_OUTPUT: 'shell_output',
-  SHELL_DONE: 'shell_done'
+  SHELL_DONE: 'shell_done',
+
+  // Pairing
+  PAIR_REQUEST: 'pair_request',
+  PAIR_CODE: 'pair_code',
 };
 
 export function safeParse(data) {

@@ -11,5 +11,7 @@ export const CONFIG = {
   ROOT_DIR: path.resolve(process.env.ROOT_DIR || os.homedir()), // sandbox root
   ALLOW_REMOTE_CLIPBOARD_SET: process.env.ALLOW_REMOTE_CLIPBOARD_SET === 'true',
   ALLOW_SHELL: process.env.ALLOW_SHELL === 'true',
-  SHELL_WHITELIST: (process.env.SHELL_WHITELIST || '').split(',').map(s => s.trim()).filter(Boolean)
+  SHELL_WHITELIST: (process.env.SHELL_WHITELIST || '').split(',').map(s => s.trim()).filter(Boolean),
+  /** Pairing code time-to-live in milliseconds (default 2 minutes) */
+  PAIRING_TTL_MS: parseInt(process.env.PAIRING_TTL_MS || '120000', 10),
 };
