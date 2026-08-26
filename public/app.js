@@ -67,10 +67,11 @@ const tabs = {
 
 let ws = null;
 let currentDeviceId = null;
-let currentToken = null; // the token actually used for this session
-let authMode = "token"; // "token" | "pair"
+let currentToken = null;
+let authMode = "token";
 const fileTransfers = new Map();
 const MAX_CHUNK = 64 * 1024;
+const MAX_CLIPBOARD_IMAGE_BYTES = 5 * 1024 * 1024;
 let pairCountdownTimer = null;
 
 const CREDS_KEY = "pcLinkCreds";
@@ -85,7 +86,7 @@ const CREDS_KEY = "pcLinkCreds";
       els.remember.checked = true;
     }
   } catch {
-    // ignore corrupt storage
+    // ignore
   }
 })();
 
@@ -100,7 +101,6 @@ function saveCreds(serverUrl, token, deviceId) {
   }
 }
 
-// Auth mode toggle
 els.modeTokenBtn?.addEventListener("click", () => setAuthMode("token"));
 els.modePairBtn?.addEventListener("click", () => setAuthMode("pair"));
 
@@ -170,7 +170,7 @@ async function connect(e) {
       token = data.token;
       deviceId = data.deviceId || deviceId;
       els.deviceId.value = deviceId;
-      els.token.value = token; // so REST calls work and user can copy it
+      els.token.value = token;
       showToast(
         "Paired! Token saved for this device. Keep it if you clear browser storage.",
         "success"
@@ -190,9 +190,7 @@ async function connect(e) {
   currentDeviceId = deviceId;
   currentToken = token;
   els.currentDeviceDisplay.textContent = deviceId;
-
   saveCreds(url, token, deviceId);
-
   setStatus("Connecting...");
 
   try {
@@ -234,8 +232,7 @@ function handleMessage(raw) {
 
     case MessageTypes.ERROR:
       console.error("Error:", msg.error);
-      if (!els.mainUI.classList.contains("hidden") === false) {
-        // still on auth screen
+      if (els.mainUI.classList.contains("hidden")) {
         setStatus("Error", msg.error);
       } else {
         showToast(msg.error || "Server error", "error");
@@ -292,7 +289,6 @@ function handleMessage(raw) {
   }
 }
 
-/* Pairing code UI */
 els.generatePairCodeBtn?.addEventListener("click", () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     showToast("Not connected", "error");
@@ -312,9 +308,7 @@ function showPairCode(code, seconds) {
   pairCountdownTimer = setInterval(() => {
     remaining -= 1;
     els.pairCodeCountdown.textContent = String(Math.max(0, remaining));
-    if (remaining <= 0) {
-      hidePairCodePanel();
-    }
+    if (remaining <= 0) hidePairCodePanel();
   }, 1000);
 }
 
@@ -359,14 +353,116 @@ function updateDeviceList(devices) {
   }
 }
 
-/* Clipboard (Browser) */
+/* -------- Clipboard (text + image) -------- */
+
+async function readLocalClipboardPayload() {
+  // Prefer ClipboardItems so we can pick up images
+  if (navigator.clipboard?.read) {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          if (blob.size > MAX_CLIPBOARD_IMAGE_BYTES) {
+            throw new Error("Image too large to sync");
+          }
+          // Normalize to PNG for host tools
+          const pngBlob =
+            imageType === "image/png"
+              ? blob
+              : await convertBlobToPng(blob);
+          const base64 = await blobToBase64(pngBlob);
+          return {
+            contentType: "image/png",
+            data: base64,
+            size: pngBlob.size,
+          };
+        }
+        if (item.types.includes("text/plain")) {
+          const blob = await item.getType("text/plain");
+          const text = await blob.text();
+          return { contentType: "text/plain", data: text };
+        }
+      }
+    } catch (e) {
+      // Fall through to readText (permissions / non-secure context)
+      if (e.message === "Image too large to sync") throw e;
+    }
+  }
+  const text = await navigator.clipboard.readText();
+  return { contentType: "text/plain", data: text };
+}
+
+function convertBlobToPng(blob) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(
+          (b) => {
+            URL.revokeObjectURL(url);
+            if (b) resolve(b);
+            else reject(new Error("PNG conversion failed"));
+          },
+          "image/png"
+        );
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        reject(err);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to load image"));
+    };
+    img.src = url;
+  });
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function sendClipboardPayload(payload) {
+  ws.send(
+    JSON.stringify({
+      type: MessageTypes.CLIPBOARD_UPDATE,
+      data: payload.data,
+      contentType: payload.contentType || "text/plain",
+      size: payload.size,
+    })
+  );
+}
+
+function sendClipboardText(text) {
+  sendClipboardPayload({ contentType: "text/plain", data: text });
+}
+
 els.readLocalClipboardBtn.addEventListener("click", async () => {
   try {
-    const text = await navigator.clipboard.readText();
-    sendClipboard(text);
-    addClipboardEntry(
-      { from: currentDeviceId, data: text, timestamp: Date.now(), local: true },
-      true
+    const payload = await readLocalClipboardPayload();
+    sendClipboardPayload(payload);
+    showToast(
+      payload.contentType === "image/png"
+        ? "Image clipboard synced"
+        : "Clipboard synced",
+      "success"
     );
   } catch (e) {
     alert("Clipboard read failed: " + e.message);
@@ -376,40 +472,63 @@ els.readLocalClipboardBtn.addEventListener("click", async () => {
 els.sendManualClipboardBtn.addEventListener("click", () => {
   const text = els.localClipboardInput.value;
   if (!text) return;
-  sendClipboard(text);
-  addClipboardEntry(
-    { from: currentDeviceId, data: text, timestamp: Date.now(), local: true },
-    true
-  );
+  sendClipboardText(text);
 });
-
-function sendClipboard(text) {
-  ws.send(
-    JSON.stringify({
-      type: MessageTypes.CLIPBOARD_UPDATE,
-      data: text,
-      contentType: "text/plain",
-    })
-  );
-}
 
 function addClipboardEntry(msg, localOrigin) {
   if (localOrigin) return;
 
   const li = document.createElement("li");
+  li.className = "clipboard-entry";
   const ts = new Date(msg.timestamp || Date.now()).toLocaleTimeString();
   const from = msg.host ? "HOST" : msg.from || "unknown";
-  li.innerHTML = `<strong>${from}</strong> <small>${ts}</small><pre>${escapeHtml(msg.data || "")}</pre>`;
+  const contentType = msg.contentType || "text/plain";
+
+  const header = document.createElement("div");
+  header.className = "clipboard-entry-header";
+  header.innerHTML = `<strong>${escapeHtml(from)}</strong> <small>${ts}</small> <span class="content-type-badge">${escapeHtml(contentType)}</span>`;
+  li.appendChild(header);
+
+  if (msg.skipped) {
+    const note = document.createElement("p");
+    note.className = "muted small";
+    note.textContent =
+      msg.reason ||
+      `Image skipped (${formatBytes(msg.size || 0)}) — over size limit`;
+    li.appendChild(note);
+  } else if (contentType === "image/png" && msg.data) {
+    const img = document.createElement("img");
+    img.className = "clipboard-image";
+    img.alt = "Clipboard image";
+    img.src = `data:image/png;base64,${msg.data}`;
+    li.appendChild(img);
+  } else {
+    const pre = document.createElement("pre");
+    pre.textContent = msg.data || "";
+    li.appendChild(pre);
+  }
+
   const btn = document.createElement("button");
-  btn.textContent = "Copy";
+  btn.textContent = contentType === "image/png" ? "Copy image" : "Copy";
   btn.addEventListener("click", async () => {
     try {
-      await navigator.clipboard.writeText(msg.data || "");
+      if (contentType === "image/png" && msg.data) {
+        const bytes = base64ToUint8Array(msg.data);
+        const blob = new Blob([bytes], { type: "image/png" });
+        await navigator.clipboard.write([
+          new ClipboardItem({ "image/png": blob }),
+        ]);
+        showToast("Image copied", "success");
+      } else {
+        await navigator.clipboard.writeText(msg.data || "");
+        showToast("Copied", "success");
+      }
     } catch (e) {
       alert(e.message);
     }
   });
   li.appendChild(btn);
+
   els.clipboardHistory.prepend(li);
   while (els.clipboardHistory.children.length > 80) {
     els.clipboardHistory.removeChild(els.clipboardHistory.lastChild);
@@ -417,7 +536,22 @@ function addClipboardEntry(msg, localOrigin) {
 }
 
 function updateHostClipboard(msg) {
-  els.hostClipboardLatest.textContent = (msg.data || "").slice(0, 5000);
+  const contentType = msg.contentType || "text/plain";
+  if (msg.skipped) {
+    els.hostClipboardLatest.textContent =
+      msg.reason || `Image too large (${formatBytes(msg.size || 0)})`;
+    return;
+  }
+  if (contentType === "image/png" && msg.data) {
+    els.hostClipboardLatest.innerHTML = "";
+    const img = document.createElement("img");
+    img.className = "clipboard-image";
+    img.alt = "Host clipboard image";
+    img.src = `data:image/png;base64,${msg.data}`;
+    els.hostClipboardLatest.appendChild(img);
+  } else {
+    els.hostClipboardLatest.textContent = (msg.data || "").slice(0, 5000);
+  }
 }
 
 els.setHostClipboardBtn.addEventListener("click", () => {
@@ -426,6 +560,7 @@ els.setHostClipboardBtn.addEventListener("click", () => {
     JSON.stringify({
       type: MessageTypes.HOST_CLIPBOARD_SET,
       data: text,
+      contentType: "text/plain",
     })
   );
 });
@@ -547,7 +682,6 @@ function addIncomingFileRow(fileId, name, received, size) {
     <button class="cancel-btn" onclick="cancelFileTransfer('${fileId}')">✕</button>
   `;
   els.incomingFiles.prepend(li);
-
   while (els.incomingFiles.children.length > 50) {
     els.incomingFiles.removeChild(els.incomingFiles.lastChild);
   }
@@ -558,18 +692,16 @@ function updateIncomingFileRow(fileId, received, size) {
     `#incomingFiles li[data-file-id="${fileId}"]`
   );
   if (!li) return;
-
   const percentage = Math.round((received / size) * 100);
   const progressFill = li.querySelector(".progress-fill");
   const progressText = li.querySelector(".progress-text");
-
   if (progressFill) progressFill.style.width = `${percentage}%`;
   if (progressText)
     progressText.textContent = `${formatBytes(received)} / ${formatBytes(size)} (${percentage}%)`;
 }
 
 function formatBytes(bytes) {
-  if (bytes === 0) return "0 Bytes";
+  if (!bytes) return "0 Bytes";
   const k = 1024;
   const sizes = ["Bytes", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -634,8 +766,6 @@ function downloadFile(rel) {
   const link = document.createElement("a");
   link.href = apiUrl(`/api/download?path=${encodeURIComponent(rel)}`);
   link.download = rel.split("/").pop();
-  // Attach token via a workaround is hard for <a>; user may need to be same-origin.
-  // Prefer fetch + blob for authenticated download if needed later.
   link.target = "_blank";
   link.rel = "noopener";
   link.click();
@@ -680,7 +810,6 @@ function appendShellOutput(stream, text) {
   els.shellOutput.scrollTop = els.shellOutput.scrollHeight;
 }
 
-/* Peer File Drag & Drop */
 ["dragenter", "dragover"].forEach((ev) => {
   els.dropZone.addEventListener(ev, (e) => {
     e.preventDefault();
@@ -701,11 +830,10 @@ function appendShellOutput(stream, text) {
   });
 });
 
-/* Utilities */
 function escapeHtml(str) {
   return String(str).replace(
     /[&<>]/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]
+    (c) => ({ "&": "&", "<": "<", ">": ">" })[c]
   );
 }
 function arrayBufferToBase64(buf) {
@@ -724,8 +852,7 @@ function base64ToUint8Array(b64) {
 }
 
 function apiBase() {
-  const url = els.serverUrl.value.trim();
-  return url.replace(/^ws/, "http");
+  return els.serverUrl.value.trim().replace(/^ws/, "http");
 }
 function apiUrl(path) {
   return apiBase() + path;
@@ -744,7 +871,6 @@ function switchTab(activeTab) {
   document
     .querySelectorAll(".tab-button")
     .forEach((btn) => btn.classList.remove("active"));
-
   document.getElementById(`panel-${activeTab}`).classList.remove("hidden");
   document.getElementById(`tab-${activeTab}`).classList.add("active");
 }
@@ -755,13 +881,14 @@ Object.keys(tabs).forEach((tab) => {
 
 els.quickClipboardBtn?.addEventListener("click", async () => {
   try {
-    const text = await navigator.clipboard.readText();
-    sendClipboard(text);
-    addClipboardEntry(
-      { from: currentDeviceId, data: text, timestamp: Date.now(), local: true },
-      true
+    const payload = await readLocalClipboardPayload();
+    sendClipboardPayload(payload);
+    showToast(
+      payload.contentType === "image/png"
+        ? "Image clipboard synced!"
+        : "Clipboard synced successfully!",
+      "success"
     );
-    showToast("Clipboard synced successfully!", "success");
   } catch (e) {
     showToast("Clipboard sync failed: " + e.message, "error");
   }
@@ -778,21 +905,14 @@ function showToast(message, type = "info") {
   const toast = document.createElement("div");
   toast.className = `toast toast-${type}`;
   toast.textContent = message;
-
   const container = document.getElementById("toast-container");
   if (container) {
     container.appendChild(toast);
-
-    setTimeout(() => {
-      toast.classList.add("show");
-    }, 100);
-
+    setTimeout(() => toast.classList.add("show"), 100);
     setTimeout(() => {
       toast.classList.remove("show");
       setTimeout(() => {
-        if (container.contains(toast)) {
-          container.removeChild(toast);
-        }
+        if (container.contains(toast)) container.removeChild(toast);
       }, 300);
     }, 3000);
   }
