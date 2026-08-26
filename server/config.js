@@ -14,4 +14,9 @@ export const CONFIG = {
   SHELL_WHITELIST: (process.env.SHELL_WHITELIST || '').split(',').map(s => s.trim()).filter(Boolean),
   /** Pairing code time-to-live in milliseconds (default 2 minutes) */
   PAIRING_TTL_MS: parseInt(process.env.PAIRING_TTL_MS || '120000', 10),
+  /** Max image size auto-broadcast from host clipboard (default 5MB) */
+  MAX_CLIPBOARD_IMAGE_BYTES: parseInt(
+    process.env.MAX_CLIPBOARD_IMAGE_BYTES || String(5 * 1024 * 1024),
+    10
+  ),
 };
