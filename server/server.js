@@ -14,12 +14,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "12mb" }));
 
-/**
- * Resolve auth: master SERVER_TOKEN or a registered per-device token.
- * Returns { kind: 'master' } | { kind: 'device', deviceId } | null.
- */
 function resolveAuth(token) {
   if (!token || typeof token !== "string") return null;
   if (token === CONFIG.TOKEN) return { kind: "master" };
@@ -28,7 +24,6 @@ function resolveAuth(token) {
   return null;
 }
 
-// Middleware: token check for REST (master or per-device)
 function authMiddleware(req, res, next) {
   const token = req.headers["x-auth-token"];
   const auth = resolveAuth(token);
@@ -39,7 +34,6 @@ function authMiddleware(req, res, next) {
   next();
 }
 
-// Send shared protocol file.
 app.get("/shared/protocol.js", (req, res) => {
   res.sendFile("./shared/protocol.js", { root: "./" });
 });
@@ -48,12 +42,6 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// ---- Pairing endpoints ----
-
-/**
- * Start pairing: requires an already-authenticated token (master or device).
- * Returns a short-lived 6-digit code.
- */
 app.post("/api/pair/start", authMiddleware, (_req, res) => {
   const { code, expiresAt } = deviceStore.createPairingCode(CONFIG.PAIRING_TTL_MS);
   res.json({
@@ -63,10 +51,6 @@ app.post("/api/pair/start", authMiddleware, (_req, res) => {
   });
 });
 
-/**
- * Complete pairing: public endpoint. Exchanges a valid pairing code for a
- * brand-new per-device token. The master SERVER_TOKEN is never exposed.
- */
 app.post("/api/pair/complete", (req, res) => {
   const { code, deviceId: requestedId, name } = req.body || {};
   if (!code) {
@@ -80,7 +64,6 @@ app.post("/api/pair/complete", (req, res) => {
   if (!deviceId) {
     deviceId = `device-${uuidv4().slice(0, 8)}`;
   }
-  // Avoid colliding with an existing registered device id
   if (deviceStore.hasDevice(deviceId)) {
     deviceId = `${deviceId}-${uuidv4().slice(0, 4)}`;
   }
@@ -94,16 +77,13 @@ app.post("/api/pair/complete", (req, res) => {
   });
 });
 
-/** List registered devices (auth required). */
 app.get("/api/devices", authMiddleware, (_req, res) => {
   res.json({ devices: deviceStore.list() });
 });
 
-/** Revoke a device token (auth required). */
 app.delete("/api/devices/:deviceId", authMiddleware, (req, res) => {
   const ok = deviceStore.revoke(req.params.deviceId);
   if (!ok) return res.status(404).json({ error: "Device not found" });
-  // Kick the live connection if present
   const entry = devices.get(req.params.deviceId);
   if (entry) {
     try {
@@ -116,7 +96,6 @@ app.delete("/api/devices/:deviceId", authMiddleware, (req, res) => {
   res.json({ ok: true });
 });
 
-// File system API
 app.get("/api/dir", authMiddleware, (req, res) => {
   try {
     const rel = req.query.path || ".";
@@ -188,9 +167,7 @@ const server = app.listen(CONFIG.PORT, CONFIG.HOST, () => {
 
 const wss = new WebSocketServer({ server });
 
-// Device registry: deviceId -> { ws, lastSeen }
 const devices = new Map();
-// Active file sends: fileId -> { from, to, size, receivedBytes }
 const activeSends = new Map();
 
 function send(ws, msg) {
@@ -244,11 +221,11 @@ wss.on("connection", (ws) => {
 
       authed = true;
 
-      // Prefer client-supplied deviceId; fall back to the one bound to the token,
-      // or generate a new one for master-token logins.
       if (auth.kind === "device") {
         deviceId =
-          (msg.deviceId || "").trim() || auth.deviceId || `device-${uuidv4().slice(0, 8)}`;
+          (msg.deviceId || "").trim() ||
+          auth.deviceId ||
+          `device-${uuidv4().slice(0, 8)}`;
       } else {
         deviceId =
           (msg.deviceId || "").trim() || `device-${uuidv4().slice(0, 8)}`;
@@ -296,7 +273,28 @@ wss.on("connection", (ws) => {
       }
 
       case MessageTypes.CLIPBOARD_UPDATE: {
-        const enriched = { ...msg, from: deviceId, timestamp: Date.now() };
+        const contentType = msg.contentType || "text/plain";
+        if (contentType === "image/png") {
+          if (typeof msg.data !== "string") {
+            return send(ws, {
+              type: MessageTypes.ERROR,
+              error: "Invalid image data",
+            });
+          }
+          const approxBytes = Math.floor((msg.data.length * 3) / 4);
+          if (approxBytes > CONFIG.MAX_CLIPBOARD_IMAGE_BYTES) {
+            return send(ws, {
+              type: MessageTypes.ERROR,
+              error: "Image exceeds size limit",
+            });
+          }
+        }
+        const enriched = {
+          ...msg,
+          contentType,
+          from: deviceId,
+          timestamp: Date.now(),
+        };
         if (msg.to) {
           forward(msg.to, enriched);
         } else {
@@ -327,13 +325,23 @@ wss.on("connection", (ws) => {
             error: "Host clipboard setting disabled",
           });
         }
+        const contentType = msg.contentType || "text/plain";
         if (typeof msg.data !== "string") {
           return send(ws, {
             type: MessageTypes.ERROR,
             error: "Invalid clipboard data",
           });
         }
-        host.setClipboard(msg.data).catch((e) => {
+        if (contentType === "image/png") {
+          const approxBytes = Math.floor((msg.data.length * 3) / 4);
+          if (approxBytes > CONFIG.MAX_CLIPBOARD_IMAGE_BYTES) {
+            return send(ws, {
+              type: MessageTypes.ERROR,
+              error: "Image exceeds size limit",
+            });
+          }
+        }
+        host.setClipboard(msg.data, contentType).catch((e) => {
           send(ws, { type: MessageTypes.ERROR, error: e.message });
         });
         break;
