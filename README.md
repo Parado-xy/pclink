@@ -35,6 +35,12 @@ Whether you’re on your phone, tablet, or another laptop halfway across the wor
 * Multi-device connection management with presence tracking.
 * Real-time WebSocket communication for instant updates.
 
+### Per-device tokens & easy pairing
+
+* Long-lived **per-device tokens** (stored as hashes in `devices.json`) instead of sharing one master token with every client.
+* **6-digit pairing codes** (2-minute TTL, one-time use) so you can onboard a new PC without typing or emailing the long secret.
+* Master `SERVER_TOKEN` still works for bootstrap / admin; new devices never need to see it.
+
 ---
 
 ##  Quick Start
@@ -55,7 +61,7 @@ npm install
 Create a `.env` file in the project root:
 
 ```bash
-# Required: secure server token
+# Required: secure server token (bootstrap / admin)
 SERVER_TOKEN=$(openssl rand -hex 32)
 
 # Optional: file system root directory (defaults to user home)
@@ -72,6 +78,9 @@ SHELL_WHITELIST=ls,pwd,whoami,git
 
 # Optional: server port (default: 8443)
 PORT=8443
+
+# Optional: pairing code lifetime in ms (default: 120000 = 2 min)
+PAIRING_TTL_MS=120000
 ```
 
 ### Run the Server
@@ -86,6 +95,15 @@ Server will be available at:
 http://localhost:8443
 ```
 
+### Pairing a new device (PC-to-PC friendly)
+
+1. On an **already connected** device, click the key icon in the device bar ("Generate pairing code").
+2. A **6-digit code** appears (valid ~2 minutes, one-time use).
+3. On the **new device**, open the UI, switch to **Pairing code**, enter the server WebSocket URL and the 6-digit code, then Connect.
+4. The server exchanges the code for a unique per-device token. That token is stored locally if "Remember credentials" is checked. The master `SERVER_TOKEN` is never sent to the new device.
+
+You can still connect with the master token or any existing per-device token via the **Token** tab.
+
 ### Remote Access via Internet (ngrok recommended)
 
 ```bash
@@ -99,8 +117,9 @@ Use the provided HTTPS URL, replacing `https://` with `wss://` for WebSocket con
 
 ##  Security Best Practices
 
-* **Tokens**: Treat `SERVER_TOKEN` like a password. Use `openssl rand -hex 32` to generate it.
-* **File System**: Never set `ROOT_DIR` to `/` or `C:\`. Use dedicated, low-risk directories.
+* **Tokens**: Treat `SERVER_TOKEN` like a password. Use `openssl rand -hex 32` to generate it. Prefer per-device tokens for day-to-day clients so you can revoke one device without rotating everyone.
+* **devices.json**: Contains only token **hashes**. Still keep the file private; it is gitignored by default.
+* **File System**: Never set `ROOT_DIR` to `/` or `C:\\`. Use dedicated, low-risk directories.
 * **Shell Access**: Keep disabled unless required. Always whitelist commands.
 * **Network**: Use HTTPS/WSS in production and consider VPN access.
 
@@ -111,9 +130,14 @@ Use the provided HTTPS URL, replacing `https://` with `wss://` for WebSocket con
 **Server** (`server/server.js`)
 
 * Express.js HTTP server with WebSocket support
-* Token-based authentication middleware
-* RESTful API endpoints for file operations
+* Token-based authentication (master or per-device)
+* RESTful API endpoints for file operations and pairing
 * Real-time WebSocket routing
+
+**Device store** (`server/deviceStore.js`)
+
+* Persistent per-device token hashes (`devices.json`)
+* Short-lived pairing codes
 
 **Host Integration** (`server/hostIntegration.js`)
 
@@ -124,7 +148,8 @@ Use the provided HTTPS URL, replacing `https://` with `wss://` for WebSocket con
 **Web Client** (`public/app.js`)
 
 * Modern JavaScript ES6 modules
-* WebSocket client with auto-reconnection
+* WebSocket client
+* Token or pairing-code auth modes
 * File drag-and-drop interface
 * Real-time clipboard and device status updates
 
@@ -137,31 +162,39 @@ Use the provided HTTPS URL, replacing `https://` with `wss://` for WebSocket con
 
 ##  Data Flow
 
-1. **Authentication**: Client connects with `SERVER_TOKEN` and device ID.
+1. **Authentication**: Client connects with master or per-device token (or completes pairing first).
 2. **Registration**: Server validates and registers the device.
 3. **Real-time Sync**: WebSocket messages manage clipboard, file transfers, and commands.
 4. **File Ops**: HTTP endpoints stream uploads/downloads.
-5. **Cleanup**: Device deregisters automatically on disconnect.
+5. **Cleanup**: Device deregisters automatically on disconnect. Tokens can be revoked via `DELETE /api/devices/:deviceId`.
 
 ---
 
 ##  API Reference
 
+### Pairing
+
+* `POST /api/pair/start` (auth required) – mint a 6-digit code `{ code, expiresAt, expiresInSeconds }`
+* `POST /api/pair/complete` (public) – body `{ code, deviceId?, name? }` → `{ deviceId, token }`
+* `GET /api/devices` (auth) – list registered devices
+* `DELETE /api/devices/:deviceId` (auth) – revoke a device token
+
 ### WebSocket Messages
 
 ```json
-{ "type": "AUTH", "token": "your-token", "deviceId": "unique-device-id" }
-{ "type": "CLIPBOARD_UPDATE", "data": "clipboard-content", "source": "device-id" }
-{ "type": "SET_HOST_CLIPBOARD", "data": "new-content" }
-{ "type": "FILE_START", "fileName": "document.pdf", "fileSize": 1024000, "target": "device-id" }
+{ "type": "auth", "token": "your-token", "deviceId": "unique-device-id" }
+{ "type": "pair_request" }
+{ "type": "pair_code", "code": "123456", "expiresInSeconds": 120 }
+{ "type": "clipboard_update", "data": "clipboard-content" }
+{ "type": "host_clipboard_set", "data": "new-content" }
+{ "type": "file_send_init", "fileId": "...", "to": "device-id", "name": "doc.pdf", "size": 1024 }
 ```
 
 ### HTTP Endpoints
 
-* `GET /api/fs/list?path=./Documents` – List directory contents
-* `GET /api/fs/download?path=./file.txt` – Download file
-* `POST /api/fs/upload` – Upload files
-* `POST /api/shell` – Execute shell command (if enabled)
+* `GET /api/dir?path=.` – List directory contents
+* `GET /api/download?path=./file.txt` – Download file
+* `POST /api/upload?dest=.` – Upload files
 
 ---
 
@@ -202,7 +235,6 @@ location / {
 **Security**
 
 * End-to-end encryption with X25519 + AES-GCM
-* Per-device JWT authentication
 * Token rotation and session timeout
 
 **Performance**
