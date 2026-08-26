@@ -69,6 +69,8 @@ class DeviceStore {
   /**
    * Validate a token. Returns deviceId if valid, null otherwise.
    * Master token is checked by the caller; this only handles per-device tokens.
+   * lastSeen is updated in memory only — disk write happens on create/revoke
+   * so file watchers (e.g. nodemon) are not triggered on every request.
    */
   validateToken(token) {
     if (!token || typeof token !== "string") return null;
@@ -76,7 +78,6 @@ class DeviceStore {
     for (const [id, rec] of this.devices) {
       if (rec.tokenHash === hash) {
         rec.lastSeen = Date.now();
-        this.save();
         return id;
       }
     }
@@ -91,7 +92,6 @@ class DeviceStore {
     const rec = this.devices.get(deviceId);
     if (rec) {
       rec.lastSeen = Date.now();
-      this.save();
     }
   }
 
@@ -116,7 +116,6 @@ class DeviceStore {
    * Mint a one-time 6-digit pairing code (TTL default 2 minutes).
    */
   createPairingCode(ttlMs = 120_000) {
-    // Clean expired codes first
     const now = Date.now();
     for (const [code, meta] of this.pairingCodes) {
       if (meta.expires < now || meta.used) this.pairingCodes.delete(code);
