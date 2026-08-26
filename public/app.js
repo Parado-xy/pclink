@@ -251,12 +251,15 @@ function handleMessage(raw) {
       break;
 
     case MessageTypes.CLIPBOARD_UPDATE:
-      addClipboardEntry(msg, false);
+      addClipboardEntry(normalizeClipboardMsg(msg), false);
       break;
 
     case MessageTypes.HOST_CLIPBOARD_UPDATE:
-      updateHostClipboard(msg);
-      addClipboardEntry({ ...msg, host: true }, false);
+      {
+        const normalized = normalizeClipboardMsg(msg);
+        updateHostClipboard(normalized);
+        addClipboardEntry({ ...normalized, host: true }, false);
+      }
       break;
 
     case MessageTypes.FILE_SEND_INIT:
@@ -355,8 +358,24 @@ function updateDeviceList(devices) {
 
 /* -------- Clipboard (text + image) -------- */
 
+/** PNG base64 always starts with iVBOR (89 50 4E 47 ...) */
+function looksLikePngBase64(data) {
+  if (typeof data !== "string" || data.length < 24) return false;
+  const head = data.replace(/\s/g, "").slice(0, 16);
+  return head.startsWith("iVBORw0KGgo");
+}
+
+function normalizeClipboardMsg(msg) {
+  const out = { ...msg };
+  let ct = out.contentType || "text/plain";
+  if (ct !== "image/png" && looksLikePngBase64(out.data)) {
+    ct = "image/png";
+  }
+  out.contentType = ct;
+  return out;
+}
+
 async function readLocalClipboardPayload() {
-  // Prefer ClipboardItems so we can pick up images
   if (navigator.clipboard?.read) {
     try {
       const items = await navigator.clipboard.read();
@@ -367,11 +386,8 @@ async function readLocalClipboardPayload() {
           if (blob.size > MAX_CLIPBOARD_IMAGE_BYTES) {
             throw new Error("Image too large to sync");
           }
-          // Normalize to PNG for host tools
           const pngBlob =
-            imageType === "image/png"
-              ? blob
-              : await convertBlobToPng(blob);
+            imageType === "image/png" ? blob : await convertBlobToPng(blob);
           const base64 = await blobToBase64(pngBlob);
           return {
             contentType: "image/png",
@@ -379,6 +395,8 @@ async function readLocalClipboardPayload() {
             size: pngBlob.size,
           };
         }
+      }
+      for (const item of items) {
         if (item.types.includes("text/plain")) {
           const blob = await item.getType("text/plain");
           const text = await blob.text();
@@ -386,8 +404,9 @@ async function readLocalClipboardPayload() {
         }
       }
     } catch (e) {
-      // Fall through to readText (permissions / non-secure context)
       if (e.message === "Image too large to sync") throw e;
+      // NotAllowedError / insecure context → fall through
+      console.warn("clipboard.read failed, falling back to readText:", e.message);
     }
   }
   const text = await navigator.clipboard.readText();
@@ -440,6 +459,10 @@ function blobToBase64(blob) {
 }
 
 function sendClipboardPayload(payload) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showToast("Not connected", "error");
+    return;
+  }
   ws.send(
     JSON.stringify({
       type: MessageTypes.CLIPBOARD_UPDATE,
@@ -483,6 +506,7 @@ function addClipboardEntry(msg, localOrigin) {
   const ts = new Date(msg.timestamp || Date.now()).toLocaleTimeString();
   const from = msg.host ? "HOST" : msg.from || "unknown";
   const contentType = msg.contentType || "text/plain";
+  const isImage = contentType === "image/png" && msg.data && !msg.skipped;
 
   const header = document.createElement("div");
   header.className = "clipboard-entry-header";
@@ -496,7 +520,7 @@ function addClipboardEntry(msg, localOrigin) {
       msg.reason ||
       `Image skipped (${formatBytes(msg.size || 0)}) — over size limit`;
     li.appendChild(note);
-  } else if (contentType === "image/png" && msg.data) {
+  } else if (isImage) {
     const img = document.createElement("img");
     img.className = "clipboard-image";
     img.alt = "Clipboard image";
@@ -509,22 +533,30 @@ function addClipboardEntry(msg, localOrigin) {
   }
 
   const btn = document.createElement("button");
-  btn.textContent = contentType === "image/png" ? "Copy image" : "Copy";
+  btn.textContent = isImage ? "Copy image" : "Copy";
   btn.addEventListener("click", async () => {
     try {
-      if (contentType === "image/png" && msg.data) {
+      if (isImage) {
         const bytes = base64ToUint8Array(msg.data);
         const blob = new Blob([bytes], { type: "image/png" });
-        await navigator.clipboard.write([
-          new ClipboardItem({ "image/png": blob }),
-        ]);
+        if (navigator.clipboard?.write && window.ClipboardItem) {
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": blob }),
+          ]);
+        } else {
+          // Fallback: offer download
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "clipboard.png";
+          a.click();
+        }
         showToast("Image copied", "success");
       } else {
         await navigator.clipboard.writeText(msg.data || "");
         showToast("Copied", "success");
       }
     } catch (e) {
-      alert(e.message);
+      alert("Copy failed: " + e.message);
     }
   });
   li.appendChild(btn);
@@ -831,9 +863,8 @@ function appendShellOutput(stream, text) {
 });
 
 function escapeHtml(str) {
-  return String(str).replace(
-    /[&<>]/g,
-    (c) => ({ "&": "&", "<": "<", ">": ">" })[c]
+  return String(str).replace(/[&<>]/g, (c) =>
+    ({ "&": "&", "<": "<", ">": ">" })[c]
   );
 }
 function arrayBufferToBase64(buf) {
